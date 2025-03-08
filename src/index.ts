@@ -2,74 +2,68 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-const NWS_API_BASE = "https://api.weather.gov";
-const USER_AGENT = "weather-app/1.0";
+// 気象庁APIのベースURL
+const JMA_API_BASE = "https://www.jma.go.jp/bosai";
 
-// Helper function for making NWS API requests
-async function makeNWSRequest<T>(url: string): Promise<T | null> {
-  const headers = {
-    "User-Agent": USER_AGENT,
-    Accept: "application/geo+json",
-  };
+// 各地域のコードマッピング
+const REGION_CODES: Record<string, string> = {
+  "東京": "130000",
+  "大阪": "270000",
+  "名古屋": "230000",
+  "福岡": "400000",
+  "札幌": "016000",
+  "仙台": "040000",
+  "新潟": "150000",
+  "広島": "340000",
+  "那覇": "471000",
+  "千葉": "120000",
+  "横浜": "140000",
+  "神戸": "280000",
+  "京都": "260000"
+};
 
+// 天気概況インターフェース
+interface WeatherOverview {
+  publishingOffice: string; // 発表元
+  reportDatetime: string;   // 発表日時
+  targetArea: string;       // 対象地域
+  headlineText: string;     // 見出し
+  text: string;             // 詳細テキスト
+}
+
+// 週間予報インターフェース
+interface WeeklyForecast {
+  publishingOffice: string; // 発表元
+  reportDatetime: string;   // 発表日時
+  headlineText: string;     // 見出し
+  timeSeriesArray: Array<{
+    timeDefines: string[];
+    areas: Array<{
+      area: { name: string };
+      weatherCodes: string[];
+      weathers: string[];
+      winds: string[];
+      waves: string[];
+      temps: string[];
+      reliabilities: string[];
+    }>;
+  }>;
+}
+
+// APIリクエスト用のヘルパー関数
+async function makeJmaRequest<T>(endpoint: string, regionCode: string): Promise<T | null> {
+  const url = `${JMA_API_BASE}/${endpoint}/${regionCode}.json`;
+  
   try {
-    const response = await fetch(url, { headers });
+    const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     return (await response.json()) as T;
   } catch (error) {
-    console.error("Error making NWS request:", error);
+    console.error("Error making JMA request:", error);
     return null;
   }
-}
-
-interface AlertFeature {
-  properties: {
-    event?: string;
-    areaDesc?: string;
-    severity?: string;
-    status?: string;
-    headline?: string;
-  };
-}
-
-// Format alert data
-function formatAlert(feature: AlertFeature): string {
-  const props = feature.properties;
-  return [
-    `Event: ${props.event || "Unknown"}`,
-    `Area: ${props.areaDesc || "Unknown"}`,
-    `Severity: ${props.severity || "Unknown"}`,
-    `Status: ${props.status || "Unknown"}`,
-    `Headline: ${props.headline || "No headline"}`,
-    "---",
-  ].join("\n");
-}
-
-interface ForecastPeriod {
-  name?: string;
-  temperature?: number;
-  temperatureUnit?: string;
-  windSpeed?: string;
-  windDirection?: string;
-  shortForecast?: string;
-}
-
-interface AlertsResponse {
-  features: AlertFeature[];
-}
-
-interface PointsResponse {
-  properties: {
-    forecast?: string;
-  };
-}
-
-interface ForecastResponse {
-  properties: {
-    periods: ForecastPeriod[];
-  };
 }
 
 // Create server instance
@@ -78,141 +72,123 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-// Register weather tools
+// 日本の地域の天気概況を取得するツール
 server.tool(
-  "get-alerts",
-  "Get weather alerts for a state",
+  "get-japan-weather",
+  "日本の地域の天気概況を取得",
   {
-    state: z.string().length(2).describe("Two-letter state code (e.g. CA, NY)"),
+    region: z.string().describe("地域名 (例: 東京, 大阪, 札幌)"),
   },
-  async ({ state }) => {
-    const stateCode = state.toUpperCase();
-    const alertsUrl = `${NWS_API_BASE}/alerts?area=${stateCode}`;
-    const alertsData = await makeNWSRequest<AlertsResponse>(alertsUrl);
-
-    if (!alertsData) {
+  async ({ region }) => {
+    // 地域コードを取得
+    const regionCode = REGION_CODES[region];
+    if (!regionCode) {
       return {
-        content: [
-          {
-            type: "text",
-            text: "Failed to retrieve alerts data",
-          },
-        ],
+        content: [{ 
+          type: "text", 
+          text: `申し訳ありません。「${region}」の地域コードが見つかりません。対応している地域: ${Object.keys(REGION_CODES).join(", ")}` 
+        }],
       };
     }
-
-    const features = alertsData.features || [];
-    if (features.length === 0) {
+    
+    // 天気概況を取得
+    const weatherData = await makeJmaRequest<WeatherOverview>("forecast/data/overview_forecast", regionCode);
+    
+    if (!weatherData) {
       return {
-        content: [
-          {
-            type: "text",
-            text: `No active alerts for ${stateCode}`,
-          },
-        ],
+        content: [{ type: "text", text: "天気データの取得に失敗しました。" }],
       };
     }
-
-    const formattedAlerts = features.map(formatAlert);
-    const alertsText = `Active alerts for ${stateCode}:\n\n${formattedAlerts.join("\n")}`;
-
+    
+    // 日時のフォーマット
+    const publishDate = new Date(weatherData.reportDatetime);
+    const formattedDate = publishDate.toLocaleString("ja-JP");
+    
+    // 結果を整形
+    const weatherText = `${weatherData.targetArea}の天気概況:\n\n` +
+      `発表: ${weatherData.publishingOffice}\n` +
+      `発表日時: ${formattedDate}\n\n` +
+      `【見出し】\n${weatherData.headlineText || "特になし"}\n\n` +
+      `【詳細】\n${weatherData.text}`;
+    
     return {
-      content: [
-        {
-          type: "text",
-          text: alertsText,
-        },
-      ],
+      content: [{ type: "text", text: weatherText }],
     };
-  },
+  }
 );
 
+// 日本の地域の週間予報を取得するツール
 server.tool(
-  "get-forecast",
-  "Get weather forecast for a location",
+  "get-japan-weekly-forecast",
+  "日本の地域の週間予報を取得",
   {
-    latitude: z.number().min(-90).max(90).describe("Latitude of the location"),
-    longitude: z
-      .number()
-      .min(-180)
-      .max(180)
-      .describe("Longitude of the location"),
+    region: z.string().describe("地域名 (例: 東京, 大阪, 札幌)"),
   },
-  async ({ latitude, longitude }) => {
-    // Get grid point data
-    const pointsUrl = `${NWS_API_BASE}/points/${latitude.toFixed(4)},${longitude.toFixed(4)}`;
-    const pointsData = await makeNWSRequest<PointsResponse>(pointsUrl);
-
-    if (!pointsData) {
+  async ({ region }) => {
+    // 地域コードを取得
+    const regionCode = REGION_CODES[region];
+    if (!regionCode) {
       return {
-        content: [
-          {
-            type: "text",
-            text: `Failed to retrieve grid point data for coordinates: ${latitude}, ${longitude}. This location may not be supported by the NWS API (only US locations are supported).`,
-          },
-        ],
+        content: [{ 
+          type: "text", 
+          text: `申し訳ありません。「${region}」の地域コードが見つかりません。対応している地域: ${Object.keys(REGION_CODES).join(", ")}` 
+        }],
       };
     }
-
-    const forecastUrl = pointsData.properties?.forecast;
-    if (!forecastUrl) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Failed to get forecast URL from grid point data",
-          },
-        ],
-      };
-    }
-
-    // Get forecast data
-    const forecastData = await makeNWSRequest<ForecastResponse>(forecastUrl);
+    
+    // 週間予報を取得
+    const forecastData = await makeJmaRequest<WeeklyForecast>("forecast/data/forecast", regionCode);
+    
     if (!forecastData) {
       return {
-        content: [
-          {
-            type: "text",
-            text: "Failed to retrieve forecast data",
-          },
-        ],
+        content: [{ type: "text", text: "週間予報の取得に失敗しました。" }],
       };
     }
-
-    const periods = forecastData.properties?.periods || [];
-    if (periods.length === 0) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "No forecast periods available",
-          },
-        ],
-      };
+    
+    // 日時のフォーマット
+    const publishDate = new Date(forecastData.reportDatetime);
+    const formattedDate = publishDate.toLocaleString("ja-JP");
+    
+    // 結果を整形
+    let forecastText = `${region}の週間予報:\n\n` +
+      `発表: ${forecastData.publishingOffice}\n` +
+      `発表日時: ${formattedDate}\n\n`;
+    
+    if (forecastData.headlineText) {
+      forecastText += `【見出し】\n${forecastData.headlineText}\n\n`;
     }
-
-    // Format forecast periods
-    const formattedForecast = periods.map((period: ForecastPeriod) =>
-      [
-        `${period.name || "Unknown"}:`,
-        `Temperature: ${period.temperature || "Unknown"}°${period.temperatureUnit || "F"}`,
-        `Wind: ${period.windSpeed || "Unknown"} ${period.windDirection || ""}`,
-        `${period.shortForecast || "No forecast available"}`,
-        "---",
-      ].join("\n"),
-    );
-
-    const forecastText = `Forecast for ${latitude}, ${longitude}:\n\n${formattedForecast.join("\n")}`;
-
+    
+    // 時系列データを抽出
+    if (forecastData.timeSeriesArray && forecastData.timeSeriesArray.length > 0) {
+      const timeSeriesData = forecastData.timeSeriesArray[0];
+      const timeDefines = timeSeriesData.timeDefines;
+      const areas = timeSeriesData.areas;
+      
+      if (areas && areas.length > 0) {
+        const areaData = areas[0];
+        forecastText += `【${areaData.area.name}の予報】\n`;
+        
+        for (let i = 0; i < timeDefines.length; i++) {
+          const date = new Date(timeDefines[i]).toLocaleDateString("ja-JP");
+          forecastText += `${date}: ${areaData.weathers[i] || "不明"}\n`;
+          
+          if (areaData.temps && areaData.temps[i]) {
+            forecastText += `気温: ${areaData.temps[i]}℃\n`;
+          }
+          
+          if (areaData.winds && areaData.winds[i]) {
+            forecastText += `風: ${areaData.winds[i]}\n`;
+          }
+          
+          forecastText += "---\n";
+        }
+      }
+    }
+    
     return {
-      content: [
-        {
-          type: "text",
-          text: forecastText,
-        },
-      ],
+      content: [{ type: "text", text: forecastText }],
     };
-  },
+  }
 );
 
 // Start the server
