@@ -147,7 +147,7 @@ const WEATHER_CODE_FALLBACK = {
 
 // エラーメッセージ定義
 const ERROR_MESSAGES = {
-  LOCATION_NOT_FOUND: (location: string) => 
+  LOCATION_NOT_FOUND: (location: string) =>
     `申し訳ありません。「${location}」の地域コードが見つかりません。都道府県名または市区町村名で指定してください。`,
   WEATHER_DATA_FAILED: "天気データの取得に失敗しました。",
   FORECAST_DATA_FAILED: "天気予報データの取得に失敗しました。",
@@ -176,7 +176,7 @@ function loadAreaDataOnStartup(): void {
     const scriptDir = path.dirname(currentFilePath);
     const projectRoot = path.dirname(scriptDir); // buildディレクトリの親（プロジェクトルート）
     const areaJsonPath = path.join(projectRoot, "area.json");
-    
+
     // ファイルの存在確認
     if (!fs.existsSync(areaJsonPath)) {
       // プロジェクトルートで見つからない場合、現在の作業ディレクトリも試す
@@ -211,13 +211,13 @@ function getAreaData(): AreaData | null {
 function traverseAreaHierarchy(areaData: AreaData, cityCode: string): { regionCode: string; areaCode: string } | null {
   const class15Code = areaData.class20s[cityCode]?.parent;
   if (!class15Code) return null;
-  
+
   const class15Info = areaData.class15s[class15Code];
   if (!class15Info) return null;
 
   const class10Code = class15Info.parent;
   if (!class10Code) return null;
-  
+
   const class10Info = areaData.class10s[class10Code];
   if (!class10Info) return null;
 
@@ -256,7 +256,7 @@ function findCityCode(cityName: string): { cityCode: string; regionCode: string;
   if (prefectureCityMatch) {
     const prefectureName = prefectureCityMatch[1];
     const cityNameOnly = prefectureCityMatch[2];
-    
+
     // 都道府県コードを取得
     const prefectureCode = findRegionCode(prefectureName);
     if (prefectureCode) {
@@ -469,13 +469,13 @@ function convertWeatherCode(weatherCode: string | undefined): string {
       return weather.label;
     }
   }
-  
+
   return "データなし";
 }
 
 // 指定された市区町村が属する地域のみを抽出する関数
 function filterAreaByCode<T extends { area: { code: string } }>(
-  areas: T[], 
+  areas: T[],
   targetAreaCode: string
 ): T[] {
   return areas.filter(area => area.area.code === targetAreaCode);
@@ -488,7 +488,7 @@ function processShortTermWeatherInfo(
   targetAreaCode: string | null
 ): string {
   let weatherText = "";
-  
+
   if (weatherSeries && weatherSeries.areas && weatherSeries.areas.length > 0) {
     const areas = isCitySearch && targetAreaCode
       ? filterAreaByCode(weatherSeries.areas, targetAreaCode)
@@ -512,7 +512,7 @@ function processShortTermWeatherInfo(
       }
     }
   }
-  
+
   return weatherText;
 }
 
@@ -523,7 +523,7 @@ function processShortTermPrecipitation(
   targetAreaCode: string | null
 ): string {
   let precipText = "";
-  
+
   const areas = isCitySearch && targetAreaCode
     ? filterAreaByCode(popSeries.areas, targetAreaCode)
     : popSeries.areas;
@@ -552,40 +552,68 @@ function processShortTermPrecipitation(
 
         // 各日付の降水確率を時間帯で表示
         for (const [date, timeData] of Object.entries(popByDate)) {
-          precipText += `${date}:\n `;
-          for (let j = 0; j < timeData.length; j++) {
-            precipText += `${timeData[j].time}:${timeData[j].pop}%`;
-            precipText += "\n";
-          }
+          precipText += `${date}: `;
+          const popValues = timeData.map(data => `${data.time}:${data.pop}%`);
+          precipText += popValues.join(" / ");
           precipText += "\n";
         }
         precipText += "\n";
       }
     }
-    precipText += "\n";
   }
-  
+
   return precipText;
 }
 
 // 短期予報の気温情報を処理する関数
 function processShortTermTemperature(tempSeries: any): string {
   let tempText = "【気温】\n";
-  
+
   for (const area of tempSeries.areas) {
     if (isTempArea(area)) {
-      tempText += `${area.area.name}: `;
+      tempText += `【${area.area.name}】\n`;
+
+      // 日付ごとに気温をグループ化
+      const tempByDate: Record<string, { min?: string; max?: string }> = {};
+
       for (let i = 0; i < tempSeries.timeDefines.length; i++) {
+        const date = formatDate(tempSeries.timeDefines[i]);
         const time = new Date(tempSeries.timeDefines[i]).getHours();
         const temp = area.temps?.[i] || "-";
-        const label = time === 0 ? "最低" : "最高";
-        tempText += `${label}:${temp}℃ `;
+
+        if (!tempByDate[date]) {
+          tempByDate[date] = {};
+        }
+
+        if (time === 0) {
+          tempByDate[date].min = temp;
+        } else {
+          tempByDate[date].max = temp;
+        }
       }
+
+      // 各日付の気温を表示
+      for (const [date, temps] of Object.entries(tempByDate)) {
+        const minTemp = temps.min;
+        const maxTemp = temps.max;
+
+        // 最高気温と最低気温が一致している場合は最低気温を表示しない
+        if (minTemp && maxTemp && minTemp === maxTemp) {
+          tempText += `${date} 最高:${maxTemp}℃\n`;
+        } else {
+          if (minTemp && minTemp !== "-") {
+            tempText += `${date} 最低:${minTemp}℃\n`;
+          }
+          if (maxTemp && maxTemp !== "-") {
+            tempText += `${date} 最高:${maxTemp}℃\n`;
+          }
+        }
+      }
+
       tempText += "\n";
     }
   }
-  tempText += "\n";
-  
+
   return tempText;
 }
 
@@ -609,7 +637,7 @@ server.tool(
     if (errorResponse) {
       return errorResponse;
     }
-    
+
     // 地域情報を取得
     const locationInfo = getLocationInfo(location);
     if (!locationInfo) {
@@ -641,10 +669,11 @@ server.tool(
   }
 );
 
-// 日本の都道府県・市区町村の短期天気予報を取得するツール（明後日まで）
+
+// 日本の都道府県・市区町村の天気予報を取得するツール（短期詳細+週間予報統合版）
 server.tool(
-  "short-forecast",
-  "日本の都道府県または市区町村の短期天気予報を取得（明後日まで）",
+  "weekly-forecast",
+  "日本の都道府県または市区町村の天気予報を取得（明後日までの詳細+週間予報）",
   {
     location: z.string().describe("都道府県名または市区町村名 (例: 愛知県, 稲沢市, 東京都, 渋谷区など)"),
   },
@@ -654,7 +683,7 @@ server.tool(
     if (errorResponse) {
       return errorResponse;
     }
-    
+
     // 地域情報を取得
     const locationInfo = getLocationInfo(location);
     if (!locationInfo) {
@@ -672,13 +701,15 @@ server.tool(
 
     // 短期予報データ（3日間）を取得
     const shortTermData = forecastData[0];
-    const formattedDate = formatDateTime(shortTermData.reportDatetime);
-
-    let forecastText = `${locationName}の天気予報（明後日までの詳細）\n\n` +
+    const shortFormattedDate = formatDateTime(shortTermData.reportDatetime);
+    
+    let forecastText = `${locationName}の天気予報\n\n` +
       `発表: ${shortTermData.publishingOffice}\n` +
-      `発表日時: ${formattedDate}\n\n`;
+      `発表日時: ${shortFormattedDate}\n\n`;
 
-    // 短期予報の詳細データを処理
+    // === 短期予報（明後日までの詳細） ===
+    forecastText += "=== 明後日までの詳細予報 ===\n\n";
+    
     if (shortTermData.timeSeries && shortTermData.timeSeries.length > 0) {
       // 天気情報（最初のtimeSeries）
       const weatherSeries = shortTermData.timeSeries[0];
@@ -697,134 +728,95 @@ server.tool(
       }
     }
 
-    return {
-      content: [{ type: "text", text: forecastText }],
-    };
-  }
-);
+    // === 週間予報（6日先まで） ===
+    if (forecastData.length >= 2) {
+      const weeklyData = forecastData[1];
+      forecastText += "=== 週間予報（6日先まで） ===\n\n";
 
-// 日本の都道府県・市区町村の週間天気予報を取得するツール（6日先まで）
-server.tool(
-  "weekly-forecast",
-  "日本の都道府県または市区町村の週間天気予報を取得（6日先まで）",
-  {
-    location: z.string().describe("都道府県名または市区町村名 (例: 愛知県, 稲沢市, 東京都, 渋谷区など)"),
-  },
-  async ({ location }) => {
-    // area.json読み込みエラーチェック
-    const errorResponse = checkAreaDataLoadError();
-    if (errorResponse) {
-      return errorResponse;
-    }
-    
-    // 地域情報を取得
-    const locationInfo = getLocationInfo(location);
-    if (!locationInfo) {
-      return createErrorResponse(ERROR_MESSAGES.LOCATION_NOT_FOUND(location));
-    }
+        if (weeklyData.timeSeries && weeklyData.timeSeries.length > 0) {
+          // 週間天気・降水確率（最初のtimeSeries）
+          const weeklyWeatherSeries = weeklyData.timeSeries[0];
+          if (weeklyWeatherSeries && weeklyWeatherSeries.areas && weeklyWeatherSeries.areas.length > 0) {
+            const area = weeklyWeatherSeries.areas[0];
+            if (isWeatherArea(area)) {
+              forecastText += `【${area.area.name}】\n`;
 
-    const { regionCode, locationName } = locationInfo;
+              for (let i = 0; i < weeklyWeatherSeries.timeDefines.length; i++) {
+                const date = formatWeeklyDate(weeklyWeatherSeries.timeDefines[i]);
+                const weatherCode = area.weatherCodes?.[i];
+                const pop = area.pops?.[i] || "-";
+                const reliability = area.reliabilities?.[i] || "";
 
-    // 予報データを取得（短期予報と週間予報の配列で返る）
-    const forecastData = await makeJmaRequest<JmaWeeklyForecastResponse>("forecast/data/forecast", regionCode);
+                // 天気コードから簡易的な天気表現を作成
+                const weather = convertWeatherCode(weatherCode);
 
-    if (!forecastData || forecastData.length === 0) {
-      return createErrorResponse(ERROR_MESSAGES.FORECAST_DATA_FAILED);
-    }
-
-    // 週間予報データを取得（配列の2番目の要素）
-    if (forecastData.length < 2) {
-      return createErrorResponse(ERROR_MESSAGES.WEEKLY_DATA_FAILED);
-    }
-
-    const weeklyData = forecastData[1];
-    const weeklyFormattedDate = formatDateTime(weeklyData.reportDatetime);
-    let forecastText = `${locationName}の天気予報（６日先まで）\n` +
-      `発表日時: ${weeklyFormattedDate}\n\n`;
-
-    if (weeklyData.timeSeries && weeklyData.timeSeries.length > 0) {
-      // 週間天気・降水確率（最初のtimeSeries）
-      const weeklyWeatherSeries = weeklyData.timeSeries[0];
-      if (weeklyWeatherSeries && weeklyWeatherSeries.areas && weeklyWeatherSeries.areas.length > 0) {
-        const area = weeklyWeatherSeries.areas[0];
-        if (isWeatherArea(area)) {
-          forecastText += `【${area.area.name}】\n`;
-
-          for (let i = 0; i < weeklyWeatherSeries.timeDefines.length; i++) {
-            const date = formatWeeklyDate(weeklyWeatherSeries.timeDefines[i]);
-            const weatherCode = area.weatherCodes?.[i];
-            const pop = area.pops?.[i] || "-";
-            const reliability = area.reliabilities?.[i] || "";
-
-            // 天気コードから簡易的な天気表現を作成
-            const weather = convertWeatherCode(weatherCode);
-
-            forecastText += `${date}: ${weather}`;
-            if (pop !== "" && pop !== "-") forecastText += ` (降水確率:${pop}%)`;
-            if (reliability) forecastText += ` [信頼度:${reliability}]`;
-            forecastText += "\n";
-          }
-          forecastText += "\n";
-        }
-      }
-
-      // 週間気温（2番目のtimeSeries）
-      if (weeklyData.timeSeries[1]) {
-        const weeklyTempSeries = weeklyData.timeSeries[1];
-        forecastText += "【週間気温】\n";
-
-        for (const area of weeklyTempSeries.areas) {
-          if (isTempArea(area)) {
-            forecastText += `${area.area.name}:\n`;
-
-            for (let i = 0; i < weeklyTempSeries.timeDefines.length; i++) {
-              const date = formatWeeklyDate(weeklyTempSeries.timeDefines[i]);
-
-              const tempMin = area.tempsMin?.[i] || "-";
-              const tempMax = area.tempsMax?.[i] || "-";
-              const tempMinLower = area.tempsMinLower?.[i] || "";
-              const tempMinUpper = area.tempsMinUpper?.[i] || "";
-              const tempMaxLower = area.tempsMaxLower?.[i] || "";
-              const tempMaxUpper = area.tempsMaxUpper?.[i] || "";
-
-              forecastText += `  ${date}: `;
-              if (tempMin !== "" && tempMin !== "-") {
-                forecastText += `最低${tempMin}℃`;
-                if (tempMinLower && tempMinUpper && tempMinLower !== tempMin && tempMinUpper !== tempMin) {
-                  forecastText += `(${tempMinLower}-${tempMinUpper}℃)`;
-                }
-              }
-              if (tempMax !== "" && tempMax !== "-") {
-                if (tempMin !== "" && tempMin !== "-") forecastText += " / ";
-                forecastText += `最高${tempMax}℃`;
-                if (tempMaxLower && tempMaxUpper && tempMaxLower !== tempMax && tempMaxUpper !== tempMax) {
-                  forecastText += `(${tempMaxLower}-${tempMaxUpper}℃)`;
-                }
+                forecastText += `${date}: ${weather}`;
+                if (pop !== "" && pop !== "-") forecastText += ` (降水確率:${pop}%)`;
+                if (reliability) forecastText += ` [信頼度:${reliability}]`;
+                forecastText += "\n";
               }
               forecastText += "\n";
             }
+          }
+
+          // 週間気温（2番目のtimeSeries）
+          if (weeklyData.timeSeries[1]) {
+            const weeklyTempSeries = weeklyData.timeSeries[1];
+            forecastText += "【週間気温】\n";
+
+            for (const area of weeklyTempSeries.areas) {
+              if (isTempArea(area)) {
+                forecastText += `${area.area.name}:\n`;
+
+                for (let i = 0; i < weeklyTempSeries.timeDefines.length; i++) {
+                  const date = formatWeeklyDate(weeklyTempSeries.timeDefines[i]);
+
+                  const tempMin = area.tempsMin?.[i] || "-";
+                  const tempMax = area.tempsMax?.[i] || "-";
+                  const tempMinLower = area.tempsMinLower?.[i] || "";
+                  const tempMinUpper = area.tempsMinUpper?.[i] || "";
+                  const tempMaxLower = area.tempsMaxLower?.[i] || "";
+                  const tempMaxUpper = area.tempsMaxUpper?.[i] || "";
+
+                  forecastText += `  ${date}: `;
+                  if (tempMin !== "" && tempMin !== "-") {
+                    forecastText += `最低${tempMin}℃`;
+                    if (tempMinLower && tempMinUpper && tempMinLower !== tempMin && tempMinUpper !== tempMin) {
+                      forecastText += `(${tempMinLower}-${tempMinUpper}℃)`;
+                    }
+                  }
+                  if (tempMax !== "" && tempMax !== "-") {
+                    if (tempMin !== "" && tempMin !== "-") forecastText += " / ";
+                    forecastText += `最高${tempMax}℃`;
+                    if (tempMaxLower && tempMaxUpper && tempMaxLower !== tempMax && tempMaxUpper !== tempMax) {
+                      forecastText += `(${tempMaxLower}-${tempMaxUpper}℃)`;
+                    }
+                  }
+                  forecastText += "\n";
+                }
+                forecastText += "\n";
+              }
+            }
+          }
+
+          // 平年値情報
+          if (weeklyData.tempAverage) {
+            forecastText += "【気温平年値参考】\n";
+            for (const area of weeklyData.tempAverage.areas) {
+              forecastText += `${area.area.name}: 最低${area.min}℃ / 最高${area.max}℃\n`;
+            }
             forecastText += "\n";
+          }
+
+          // 降水量平年値情報
+          if (weeklyData.precipAverage) {
+            forecastText += "【降水量平年値参考】\n";
+            for (const area of weeklyData.precipAverage.areas) {
+              forecastText += `${area.area.name}: ${area.min}mm～${area.max}mm\n`;
+            }
           }
         }
       }
-
-      // 平年値情報
-      if (weeklyData.tempAverage) {
-        forecastText += "【気温平年値参考】\n";
-        for (const area of weeklyData.tempAverage.areas) {
-          forecastText += `${area.area.name}: 最低${area.min}℃ / 最高${area.max}℃\n`;
-        }
-        forecastText += "\n";
-      }
-
-      // 降水量平年値情報
-      if (weeklyData.precipAverage) {
-        forecastText += "【降水量平年値参考】\n";
-        for (const area of weeklyData.precipAverage.areas) {
-          forecastText += `${area.area.name}: ${area.min}mm～${area.max}mm\n`;
-        }
-      }
-    }
 
     return {
       content: [{ type: "text", text: forecastText }],
