@@ -60,6 +60,7 @@ Claude for Desktopで使用するには、以下のように設定ファイル�
 ```
 
 3. Claude for Desktopを再起動
+   - Windows環境では、システムトレイ（タスクトレイ）のClaude Desktopアイコンを右クリックして「終了」で終了させ、再度起動してください
 
 ## 利用例
 
